@@ -87,74 +87,86 @@
 
   }
 
+  var isAnimate = true;
 
-  function moveAll(lines,dots,canvas){
-    var ctx = canvas.getContext('2d');
-    var time = (new Date().getTime());
-    // var lineSpeed = 80;
-    if(lines.length){
-      for(var i = 0 ; i < lines.length ; i++){
-        // lines[i].timer += Math.random() * 1000;
-        var newX = lines[i].speed * (time - lines[i].timer)  / 1000,
-            newY = lines[i].speed * (time - lines[i].timer) / 1000;
-        if(lines[i].direction == "horizontal"){
-          if(newX < canvas.width){
-            lines[i].X = newX;
-            lines[i].ToX = newX + lines[i].length;
+  // document.addEventListener('click',function(e){
+  //   console.log(e);
+  //   isAnimate = !isAnimate;
+  //   moveAll((new Date()).getTime(),lineArray,DotArray,gridCanvas);
+  // });
+  document.addEventListener('click',function(e){console.log(e)});
+  console.log('ddd');
+
+  function moveAll(lastTime,lines,dots,canvas){
+    if(isAnimate){
+
+      var ctx = canvas.getContext('2d');
+      var time = (new Date().getTime()) - lastTime;
+      // var lineSpeed = 80;
+      if(lines.length){
+        for(var i = 0 ; i < lines.length ; i++){
+          // lines[i].timer += Math.random() * 1000;
+          var newX = lines[i].speed * (time - lines[i].timer)  / 1000,
+              newY = lines[i].speed * (time - lines[i].timer) / 1000;
+          if(lines[i].direction === "horizontal"){
+            if(newX < canvas.width){
+              lines[i].X = newX;
+              lines[i].ToX = newX + lines[i].length;
+            }
+            // 直线跑到底之后消失
+            if(newX >= canvas.width ){
+              lines.splice(i,1);
+              lineFactory(1,dotCollection);
+            }
           }
-          // 直线跑到底之后消失
-          if(newX >= canvas.width ){
-            lines.splice(i,1);
-            lineFactory(1,dotCollection);
+          if(lines[i].direction == "verticle"){
+            if(newY < canvas.height ){
+              lines[i].Y = newY;
+              lines[i].ToY = newY + lines[i].length;
+            }
+            if(newY >= canvas.height ){
+              lines.splice(i,1);
+              lineFactory(1,dotCollection);
+            }
           }
         }
-        if(lines[i].direction == "verticle"){
-          if(newY < canvas.height ){
-            lines[i].Y = newY;
-            lines[i].ToY = newY + lines[i].length;
+
+      }
+      if(dots.length){
+        for(var i = 0 ; i < dots.length; i++){
+          if(dots[i].opacity > 0){
+            dots[i].opacity -= 0.06;
           }
-          if(newY >= canvas.height ){
-            lines.splice(i,1);
-            lineFactory(1,dotCollection);
+          else{
+            delete dots[i];
+            var xyIndex = getIndex(dotCollection),
+                dotsOpacity = getIndex(opacityCollection),
+                config = {
+                  X : dotCollection[xyIndex][0],
+                  Y : dotCollection[xyIndex][1],
+                  radius : radius,
+                  opacity : opacityCollection[dotsOpacity],
+                  style : dotStyle
+                };
+            dots[i] = new DotBuild(config);
+            // console.log('一个点点阵亡了');
           }
+          // }
         }
+
       }
 
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      drawGrid(gridCanvas,gridContext,dotUnit);
+      // drawGrid(textCanvas,textContext,dotUnit);
+      drawArc(dots,ctx);
+      drawLine(lines, canvas);
+      // var cf = new canvasFade(topCanvas);
+      requestAnimFrame(function() {
+        moveAll(time,lines,dots,canvas);
+        drawShadow();
+      });
     }
-    if(dots.length){
-      for(var i = 0 ; i < dots.length; i++){
-        if(dots[i].opacity > 0){
-          dots[i].opacity -= 0.06;
-        }
-        else{
-          delete dots[i];
-          var xyIndex = getIndex(dotCollection),
-              dotsOpacity = getIndex(opacityCollection),
-              config = {
-                X : dotCollection[xyIndex][0],
-                Y : dotCollection[xyIndex][1],
-                radius : radius,
-                opacity : opacityCollection[dotsOpacity],
-                style : dotStyle
-              };
-          dots[i] = new DotBuild(config);
-          // console.log('一个点点阵亡了');
-        }
-        // }
-      }
-    }
-    ctx.clearRect(0,0,canvas.width,canvas.height);
-    drawGrid(gridCanvas,gridContext,dotUnit);
-    // drawGrid(textCanvas,textContext,dotUnit);
-    drawArc(dots,ctx);
-    drawLine(lines, canvas);
-    // var cf = new canvasFade(topCanvas);
-    requestAnimFrame(function() {
-      moveAll(lines,dots,canvas);
-      drawShadow();
-    });
-
-
   }
   function init(){
     //set the canvas size according to the viewport;
@@ -185,4 +197,5 @@
     $("#page1title").addClass("slideOutUp");
     $("#page1caption").addClass("slideOutDown");
   });
+
 })(this, this.document);

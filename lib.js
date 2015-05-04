@@ -1,215 +1,505 @@
-var canvasHeight = window.innerHeight,
-    canvasWidth = window.innerWidth;
-var direction = ["horizontal","verticle"],
-    color = ["#32CD32"],
-    lineLength = [80,90,100,120,140,160],
-    lineSpeed = [500,550,600],
-    lineWidth = 2,
-    lineArray =[],
-    dotUnit = 20,
-    dotCollection = [],
-    DotArray =[],
-    opacityCollection = [0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1],
-    radius = 10,
-    dotStyle = "rgba(50, 205, 50,";
+/**
+ * Parallax.js
+ * @author Matthew Wagerfield - @wagerfield
+ * @description Creates a parallax effect between an array of layers,
+ *              driving the motion from the gyroscope output of a smartdevice.
+ *              If no gyroscope is available, the cursor position is used.
+ */
+;(function(window, document, undefined) {
 
-window.requestAnimFrame = (function(callback){
-  return  window.requestAnimationFrame ||
-    window.webkitRequestAnimationFrame ||
-    window.mozRequestAnimationFrame    ||
-    window.oRequestAnimationFrame      ||
-    window.msRequestAnimationFrame     ||
-    function(callback){
-      window.setTimeout(callback, 1000 / 60);
+  // Strict Mode
+  'use strict';
+
+  // Constants
+  var NAME = 'Parallax';
+  var MAGIC_NUMBER = 30;
+  var DEFAULTS = {
+    relativeInput: false,
+    clipRelativeInput: false,
+    calibrationThreshold: 100,
+    calibrationDelay: 500,
+    supportDelay: 500,
+    calibrateX: false,
+    calibrateY: true,
+    invertX: true,
+    invertY: true,
+    limitX: false,
+    limitY: false,
+    scalarX: 10.0,
+    scalarY: 10.0,
+    frictionX: 0.1,
+    frictionY: 0.1,
+    originX: 0.5,
+    originY: 0.5
+  };
+
+  function Parallax(element, options) {
+
+    // DOM Context
+    this.element = element;
+    this.layers = element.getElementsByClassName('layer');
+
+    // Data Extraction
+    var data = {
+      calibrateX: this.data(this.element, 'calibrate-x'),
+      calibrateY: this.data(this.element, 'calibrate-y'),
+      invertX: this.data(this.element, 'invert-x'),
+      invertY: this.data(this.element, 'invert-y'),
+      limitX: this.data(this.element, 'limit-x'),
+      limitY: this.data(this.element, 'limit-y'),
+      scalarX: this.data(this.element, 'scalar-x'),
+      scalarY: this.data(this.element, 'scalar-y'),
+      frictionX: this.data(this.element, 'friction-x'),
+      frictionY: this.data(this.element, 'friction-y'),
+      originX: this.data(this.element, 'origin-x'),
+      originY: this.data(this.element, 'origin-y')
     };
-})();
-function getIndex(collection){
-  return Math.floor(Math.random()*(collection.length));
-}
 
-function getDotCollection(grid,unit){
-  var dotCollection = [];
-  for(var x = 0.5;x < grid.width ; x += unit){
-    for(var y = 0.5;y < grid.height; y += unit){
-      dotCollection.push([x,y]);
+    // Delete Null Data Values
+    for (var key in data) {
+      if (data[key] === null) delete data[key];
     }
-  }
-  return dotCollection;
-}
-function drawArc(dots,context){
-  for(var i = 1 ; i < dots.length; i++){
-    context.beginPath();
-    context.arc(dots[i].X,dots[i].Y,dots[i].radius,0,Math.PI*2,true);
-    // "rgba(118, 205, 106," + 1 + ")" =  "rgba(118, 205, 106,1)";
-    context.fillStyle = dots[i].style + dots[i].opacity + ")";
-    context.closePath();
-    context.fill();
-  }
-};
-function gaussBlur(image, width, height, radius, sigma) {
-  var gaussMatrix = [],
-      gaussSum = 0,
-      x, y,
-      r, g, b, a,
-      i, j, k, len;
-  var pixes = image.data;
 
-  radius = Math.floor(radius) || 3;
-  sigma = sigma || radius / 3;
+    // Compose Settings Object
+    this.extend(this, DEFAULTS, options, data);
 
-  a = 1 / (Math.sqrt(2 * Math.PI) * sigma);
-  b = -1 / (2 * sigma * sigma);
-  //生成高斯矩阵
-  for (i = 0, x = -radius; x <= radius; x++, i++){
-    g = a * Math.exp(b * x * x);
-    gaussMatrix[i] = g;
-    gaussSum += g;
+    // States
+    this.calibrationTimer = null;
+    this.calibrationFlag = true;
+    this.enabled = false;
+    this.depths = [];
+    this.raf = null;
 
+    // Element Bounds
+    this.bounds = null;
+    this.ex = 0;
+    this.ey = 0;
+    this.ew = 0;
+    this.eh = 0;
+
+    // Element Center
+    this.ecx = 0;
+    this.ecy = 0;
+
+    // Element Range
+    this.erx = 0;
+    this.ery = 0;
+
+    // Calibration
+    this.cx = 0;
+    this.cy = 0;
+
+    // Input
+    this.ix = 0;
+    this.iy = 0;
+
+    // Motion
+    this.mx = 0;
+    this.my = 0;
+
+    // Velocity
+    this.vx = 0;
+    this.vy = 0;
+
+    // Callbacks
+    this.onMouseMove = this.onMouseMove.bind(this);
+    this.onDeviceOrientation = this.onDeviceOrientation.bind(this);
+    this.onOrientationTimer = this.onOrientationTimer.bind(this);
+    this.onCalibrationTimer = this.onCalibrationTimer.bind(this);
+    this.onAnimationFrame = this.onAnimationFrame.bind(this);
+    this.onWindowResize = this.onWindowResize.bind(this);
+
+    // Initialise
+    this.initialise();
   }
-  //归一化, 保证高斯矩阵的值在[0,1]之间
-  for (i = 0, len = gaussMatrix.length; i < len; i++) {
-    gaussMatrix[i] /= gaussSum;
-  }
-  //x 方向一维高斯运算
-  for (y = 0; y < height; y++) {
-    for (x = 0; x < width; x++) {
-      r = g = b = a = 0;
-      gaussSum = 0;
-      for(j = -radius; j <= radius; j++){
-        k = x + j;
-        if(k >= 0 && k < width){//确保 k 没超出 x 的范围
-          //r,g,b,a 四个一组
-          i = (y * width + k) * 4;
-          r += pixes[i] * gaussMatrix[j + radius];
-          g += pixes[i + 1] * gaussMatrix[j + radius];
-          b += pixes[i + 2] * gaussMatrix[j + radius];
-          // a += pixes[i + 3] * gaussMatrix[j];
-          gaussSum += gaussMatrix[j + radius];
+  // 第一个参数位主目标.将其余参数的所有属性传给主目标
+  Parallax.prototype.extend = function() {
+    if (arguments.length > 1) {
+      var master = arguments[0];
+      for (var i = 1, l = arguments.length; i < l; i++) {
+        var object = arguments[i];
+        for (var key in object) {
+          master[key] = object[key];
         }
       }
-      i = (y * width + x) * 4;
-      // 除以 gaussSum 是为了消除处于边缘的像素, 高斯运算不足的问题
-      // console.log(gaussSum)
-      pixes[i] = r / gaussSum;
-      pixes[i + 1] = g / gaussSum;
-      pixes[i + 2] = b / gaussSum;
-      // pixes[i + 3] = a ;
     }
-  }
-  //y 方向一维高斯运算
-  for (x = 0; x < width; x++) {
-    for (y = 0; y < height; y++) {
-      r = g = b = a = 0;
-      gaussSum = 0;
-      for(j = -radius; j <= radius; j++){
-        k = y + j;
-        if(k >= 0 && k < height){//确保 k 没超出 y 的范围
-          i = (k * width + x) * 4;
-          r += pixes[i] * gaussMatrix[j + radius];
-          g += pixes[i + 1] * gaussMatrix[j + radius];
-          b += pixes[i + 2] * gaussMatrix[j + radius];
-          // a += pixes[i + 3] * gaussMatrix[j];
-          gaussSum += gaussMatrix[j + radius];
+  };
+  // this.extend(this, DEFAULTS, options, data);
+
+  Parallax.prototype.data = function(element, name) {
+    return this.deserialize(element.getAttribute('data-'+name));
+  };
+  // deserialize 并行化
+  Parallax.prototype.deserialize = function(value) {
+    if (value === "true") {
+      return true;
+    } else if (value === "false") {
+      return false;
+    } else if (value === "null") {
+      return null;
+    } else if (!isNaN(parseFloat(value)) && isFinite(value)) {
+      return parseFloat(value);
+    } else {
+      return value;
+    }
+  };
+
+  Parallax.prototype.camelCase = function(value) {
+    return value.replace(/-+(.)?/g, function(match, character){
+      return character ? character.toUpperCase() : '';
+    });
+  };
+
+  Parallax.prototype.transformSupport = function(value) {
+    var element = document.createElement('div');
+    var propertySupport = false;
+    var propertyValue = null;
+    var featureSupport = false;
+    var cssProperty = null;
+    var jsProperty = null;
+    for (var i = 0, l = this.vendors.length; i < l; i++) {
+      if (this.vendors[i] !== null) {
+        cssProperty = this.vendors[i][0] + 'transform';
+        jsProperty = this.vendors[i][1] + 'Transform';
+      } else {
+        cssProperty = 'transform';
+        jsProperty = 'transform';
+      }
+      if (element.style[jsProperty] !== undefined) {
+        propertySupport = true;
+        break;
+      }
+    }
+    switch(value) {
+      case '2D':
+        featureSupport = propertySupport;
+        break;
+      case '3D':
+        if (propertySupport) {
+          var body = document.body || document.createElement('body');
+          var documentElement = document.documentElement;
+          var documentOverflow = documentElement.style.overflow;
+          if (!document.body) {
+            documentElement.style.overflow = 'hidden';
+            documentElement.appendChild(body);
+            body.style.overflow = 'hidden';
+            body.style.background = '';
+          }
+          body.appendChild(element);
+          element.style[jsProperty] = 'translate3d(1px,1px,1px)';
+          propertyValue = window.getComputedStyle(element).getPropertyValue(cssProperty);
+          featureSupport = propertyValue !== undefined && propertyValue.length > 0 && propertyValue !== "none";
+          documentElement.style.overflow = documentOverflow;
+          body.removeChild(element);
+        }
+        break;
+    }
+    return featureSupport;
+  };
+  // vender 服务商
+  Parallax.prototype.ww = null;
+  Parallax.prototype.wh = null;
+  Parallax.prototype.wcx = null;
+  Parallax.prototype.wcy = null;
+  Parallax.prototype.wrx = null;
+  Parallax.prototype.wry = null;
+  Parallax.prototype.portrait = null;
+  Parallax.prototype.desktop = !navigator.userAgent.match(/(iPhone|iPod|iPad|Android|BlackBerry|BB10|mobi|tablet|opera mini|nexus 7)/i);
+  Parallax.prototype.vendors = [null,['-webkit-','webkit'],['-moz-','Moz'],['-o-','O'],['-ms-','ms']];
+  Parallax.prototype.motionSupport = !!window.DeviceMotionEvent;
+  Parallax.prototype.orientationSupport = !!window.DeviceOrientationEvent;
+  Parallax.prototype.orientationStatus = 0;
+  Parallax.prototype.transform2DSupport = Parallax.prototype.transformSupport('2D');
+  Parallax.prototype.transform3DSupport = Parallax.prototype.transformSupport('3D');
+  Parallax.prototype.propertyCache = {};
+
+  Parallax.prototype.initialise = function() {
+
+    // Configure Context Styles
+    if (this.transform3DSupport) this.accelerate(this.element);
+    var style = window.getComputedStyle(this.element);
+    if (style.getPropertyValue('position') === 'static') {
+      this.element.style.position = 'relative';
+    }
+
+    // Setup
+    this.updateLayers();
+    this.updateDimensions();
+    this.enable();
+    this.queueCalibration(this.calibrationDelay);
+  };
+
+  Parallax.prototype.updateLayers = function() {
+
+    // Cache Layer Elements
+    this.layers = this.element.getElementsByClassName('layer');
+    this.depths = [];
+
+    // Configure Layer Styles
+    for (var i = 0, l = this.layers.length; i < l; i++) {
+      var layer = this.layers[i];
+      if (this.transform3DSupport) this.accelerate(layer);
+      layer.style.position = i ? 'absolute' : 'relative';
+      layer.style.display = 'block';
+      layer.style.left = 0;
+      layer.style.top = 0;
+
+      // Cache Layer Depth
+      this.depths.push(this.data(layer, 'depth') || 0);
+    }
+  };
+
+  Parallax.prototype.updateDimensions = function() {
+    // innerWidth 除去border以外的尺寸
+    this.ww = window.innerWidth;
+    this.wh = window.innerHeight;
+    // Mouse Input Only
+    this.wcx = this.ww * this.originX;
+    this.wcy = this.wh * this.originY;
+
+    this.wrx = Math.max(this.wcx, this.ww - this.wcx);
+    this.wry = Math.max(this.wcy, this.wh - this.wcy);
+  };
+
+  Parallax.prototype.updateBounds = function() {
+    // 返回该元素的描述边框的只读属性，单位为px
+    this.bounds = this.element.getBoundingClientRect();
+    this.ex = this.bounds.left;
+    this.ey = this.bounds.top;
+    this.ew = this.bounds.width;
+    this.eh = this.bounds.height;
+    this.ecx = this.ew * this.originX;
+    this.ecy = this.eh * this.originY;
+    this.erx = Math.max(this.ecx, this.ew - this.ecx);
+    this.ery = Math.max(this.ecy, this.eh - this.ecy);
+  };
+  //校准器
+  Parallax.prototype.queueCalibration = function(delay) {
+    clearTimeout(this.calibrationTimer);
+    this.calibrationTimer = setTimeout(this.onCalibrationTimer, delay);
+  };
+
+  Parallax.prototype.enable = function() {
+    if (!this.enabled) {
+      this.enabled = true;
+      if (this.orientationSupport) {
+        this.portrait = null;
+        window.addEventListener('deviceorientation', this.onDeviceOrientation);
+        setTimeout(this.onOrientationTimer, this.supportDelay);
+      } else {
+        this.cx = 0;
+        this.cy = 0;
+        this.portrait = false;
+        window.addEventListener('mousemove', this.onMouseMove);
+      }
+      window.addEventListener('resize', this.onWindowResize);
+      this.raf = requestAnimationFrame(this.onAnimationFrame);
+    }
+  };
+
+  Parallax.prototype.disable = function() {
+    if (this.enabled) {
+      this.enabled = false;
+      if (this.orientationSupport) {
+        window.removeEventListener('deviceorientation', this.onDeviceOrientation);
+      } else {
+        window.removeEventListener('mousemove', this.onMouseMove);
+      }
+      window.removeEventListener('resize', this.onWindowResize);
+      cancelAnimationFrame(this.raf);
+    }
+  };
+
+  Parallax.prototype.calibrate = function(x, y) {
+    this.calibrateX = x === undefined ? this.calibrateX : x;
+    this.calibrateY = y === undefined ? this.calibrateY : y;
+  };
+
+  Parallax.prototype.invert = function(x, y) {
+    this.invertX = x === undefined ? this.invertX : x;
+    this.invertY = y === undefined ? this.invertY : y;
+  };
+
+  Parallax.prototype.friction = function(x, y) {
+    this.frictionX = x === undefined ? this.frictionX : x;
+    this.frictionY = y === undefined ? this.frictionY : y;
+  };
+
+  Parallax.prototype.scalar = function(x, y) {
+    this.scalarX = x === undefined ? this.scalarX : x;
+    this.scalarY = y === undefined ? this.scalarY : y;
+  };
+
+  Parallax.prototype.limit = function(x, y) {
+    this.limitX = x === undefined ? this.limitX : x;
+    this.limitY = y === undefined ? this.limitY : y;
+  };
+
+  Parallax.prototype.origin = function(x, y) {
+    this.originX = x === undefined ? this.originX : x;
+    this.originY = y === undefined ? this.originY : y;
+  };
+
+  Parallax.prototype.clamp = function(value, min, max) {
+    value = Math.max(value, min);
+    value = Math.min(value, max);
+    return value;
+  };
+
+  Parallax.prototype.css = function(element, property, value) {
+    var jsProperty = this.propertyCache[property];
+    if (!jsProperty) {
+      for (var i = 0, l = this.vendors.length; i < l; i++) {
+        if (this.vendors[i] !== null) {
+          jsProperty = this.camelCase(this.vendors[i][1] + '-' + property);
+        } else {
+          jsProperty = property;
+        }
+        if (element.style[jsProperty] !== undefined) {
+          this.propertyCache[property] = jsProperty;
+          break;
         }
       }
-      i = (y * width + x) * 4;
-      pixes[i] = r / gaussSum;
-      pixes[i + 1] = g / gaussSum;
-      pixes[i + 2] = b / gaussSum;
     }
-  }
-  //end
-  return image;
-}
-function Ellipse(context, x, y, a, b)
-{
-  context.save();
-  //选择a、b中的较大者作为arc方法的半径参数
-  var r = (a > b) ? a : b;
-  var ratioX = a / r; //横轴缩放比率
-  var ratioY = b / r; //纵轴缩放比率
-  context.scale(ratioX, ratioY); //进行缩放（均匀压缩）
-  context.beginPath();
-  //从椭圆的左端点开始逆时针绘制
-  context.moveTo((x + a) / ratioX, y / ratioY);
-  context.arc(x / ratioX, y / ratioY, r, 0, 2 * Math.PI);
-  context.closePath();
-  context.stroke();
-  context.restore();
-};
-function setSize(canvas,rate){
-  canvas.width = canvasWidth * rate;
-  canvas.height = canvasHeight * rate;
-}
+    element.style[jsProperty] = value;
+  };
 
-function Builder(config){
-  this.X = config.X;
-  this.Y = config.Y;
-}
-
-function LineBuild(config){
-  Builder.call(this,config);
-  this.ToX = config.ToX;
-  this.ToY = config.ToY;
-  this.direction = config.direction;
-  this.width = config.width;
-  this.color = config.color;
-  this.length = config.length;
-  this.speed = config.speed;
-  this.timer = new Date().getTime();
-}
-
-function lineFactory(numbers,collection){
-  for(var i = 0; i < numbers; i++){
-    var xyIndex = getIndex(collection),
-        colorIndex = getIndex(color),
-        lengthIndex = getIndex(lineLength),
-        speedIndex = getIndex(lineSpeed),
-        directionIndex = getIndex(direction),
-        line,
-        config = {
-          X : collection[xyIndex][0],
-          Y : collection[xyIndex][1],
-          direction : direction[directionIndex],
-          width : lineWidth,
-          length : lineLength[lengthIndex],
-          speed : lineSpeed[speedIndex],
-          color : color[colorIndex]
-        };
-    if(config.direction  == "horizontal"){
-      config.ToX = config.X + config.length;
-      config.ToY = config.Y;
-      line = new LineBuild(config);
-      lineArray.push(line);
+  Parallax.prototype.accelerate = function(element) {
+    this.css(element, 'transform', 'translate3d(0,0,0)');
+    // 使被转换的子元素保留其3D转换，IE不支持这个特性
+    this.css(element, 'transform-style', 'preserve-3d');
+    // 隐藏旋转元素的背面
+    this.css(element, 'backface-visibility', 'hidden');
+  };
+  //设置位置
+  Parallax.prototype.setPosition = function(element, x, y) {
+    x += 'px';
+    y += 'px';
+    if (this.transform3DSupport) {
+      this.css(element, 'transform', 'translate3d('+x+','+y+',0)');
+    } else if (this.transform2DSupport) {
+      this.css(element, 'transform', 'translate('+x+','+y+')');
+    } else {
+      element.style.left = x;
+      element.style.top = y;
     }
-    if(direction[directionIndex] == "verticle"){
-      config.ToX = config.X;
-      config.ToY = config.Y + config.length;
-      line = new LineBuild(config);
-      lineArray.push(line);
+  };
+
+  Parallax.prototype.onOrientationTimer = function(event) {
+    if (this.orientationSupport && this.orientationStatus === 0) {
+      this.disable();
+      this.orientationSupport = false;
+      this.enable();
     }
-  }
-  // console.log(lineArray);
-};
-function DotBuild(config){
-  Builder.call(this,config);
-  this.radius = config.radius;
-  this.opacity = config.opacity;
-  this.style = config.style;
-  // this.timer = new Date().getTime();
-}
-function DotFactory(numbers,collection){
-  for(var i = 0; i < numbers; i++){
-    var xyIndex = getIndex(collection),
-        dotsOpacity = getIndex(opacityCollection),
-        config = {
-          X : collection[xyIndex][0],
-          Y : collection[xyIndex][1],
-          radius : radius,
-          opacity : opacityCollection[dotsOpacity],
-          style : dotStyle
-        };
-    var dot = new DotBuild(config);
-    DotArray.push(dot);
-  }
-}
+  };
+
+  Parallax.prototype.onCalibrationTimer = function(event) {
+    this.calibrationFlag = true;
+  };
+
+  Parallax.prototype.onWindowResize = function(event) {
+    this.updateDimensions();
+  };
+  //calibration 校准;threshold 阈值
+  Parallax.prototype.onAnimationFrame = function() {
+    this.updateBounds();
+    var dx = this.ix - this.cx;
+    var dy = this.iy - this.cy;
+    if ((Math.abs(dx) > this.calibrationThreshold) || (Math.abs(dy) > this.calibrationThreshold)) {
+      this.queueCalibration(0);
+    }
+    if (this.portrait) {
+      this.mx = this.calibrateX ? dy : this.iy;
+      this.my = this.calibrateY ? dx : this.ix;
+    } else {
+      this.mx = this.calibrateX ? dx : this.ix;
+      this.my = this.calibrateY ? dy : this.iy;
+    }
+    this.mx *= this.ew * (this.scalarX / 100);
+    this.my *= this.eh * (this.scalarY / 100);
+    if (!isNaN(parseFloat(this.limitX))) {
+      this.mx = this.clamp(this.mx, -this.limitX, this.limitX);
+    }
+    if (!isNaN(parseFloat(this.limitY))) {
+      this.my = this.clamp(this.my, -this.limitY, this.limitY);
+    }
+    this.vx += (this.mx - this.vx) * this.frictionX;
+    this.vy += (this.my - this.vy) * this.frictionY;
+    for (var i = 0, l = this.layers.length; i < l; i++) {
+      var layer = this.layers[i];
+      var depth = this.depths[i];
+      var xOffset = this.vx * depth * (this.invertX ? -1 : 1);
+      var yOffset = this.vy * depth * (this.invertY ? -1 : 1);
+      this.setPosition(layer, xOffset, yOffset);
+    }
+    this.raf = requestAnimationFrame(this.onAnimationFrame);
+  };
+
+  Parallax.prototype.onDeviceOrientation = function(event) {
+
+    // Validate environment and event properties.
+    if (!this.desktop && event.beta !== null && event.gamma !== null) {
+
+      // Set orientation status.
+      this.orientationStatus = 1;
+
+      // Extract Rotation
+      var x = (event.beta  || 0) / MAGIC_NUMBER; //  -90 :: 90
+      var y = (event.gamma || 0) / MAGIC_NUMBER; // -180 :: 180
+
+      // Detect Orientation Change
+      var portrait = this.wh > this.ww;
+      if (this.portrait !== portrait) {
+        this.portrait = portrait;
+        this.calibrationFlag = true;
+      }
+
+      // Set Calibration
+      if (this.calibrationFlag) {
+        this.calibrationFlag = false;
+        this.cx = x;
+        this.cy = y;
+      }
+
+      // Set Input
+      this.ix = x;
+      this.iy = y;
+    }
+  };
+
+  Parallax.prototype.onMouseMove = function(event) {
+
+    // Cache mouse coordinates.
+    var clientX = event.clientX;
+    var clientY = event.clientY;
+
+    // Calculate Mouse Input
+    if (!this.orientationSupport && this.relativeInput) {
+
+      // Clip mouse coordinates inside element bounds.
+      if (this.clipRelativeInput) {
+        clientX = Math.max(clientX, this.ex);
+        clientX = Math.min(clientX, this.ex + this.ew);
+        clientY = Math.max(clientY, this.ey);
+        clientY = Math.min(clientY, this.ey + this.eh);
+      }
+
+      // Calculate input relative to the element.
+      this.ix = (clientX - this.ex - this.ecx) / this.erx;
+      this.iy = (clientY - this.ey - this.ecy) / this.ery;
+
+    } else {
+
+      // Calculate input relative to the window.
+      this.ix = (clientX - this.wcx) / this.wrx;
+      this.iy = (clientY - this.wcy) / this.wry;
+    }
+  };
+
+  // Expose Parallax
+  window[NAME] = Parallax;
+
+  var scene = documment.getElementsByClassName('page2');
+  var parallax = new Parallax(scene);
+
+})(window, document);
